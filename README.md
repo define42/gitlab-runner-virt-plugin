@@ -74,29 +74,64 @@ Supported fields:
 
 ## Runner Example
 
-Example `config.toml` fragments for a GitLab Runner using `docker-autoscaler`:
+Example full `config.toml` for a GitLab Runner using `docker-autoscaler` with this plugin:
 
 ```toml
-[runners.autoscaler.plugin_config]
-uri = "qemu:///system"
-pool_name = "default"
-base_volume_name = "flatcar_production_qemu_image.img"
-network_name = "default"
-state_dir = "/var/lib/libvirt/gitlab-runner-virt-plugin"
-domain_prefix = "gitlab-runner"
-max_size = 10
-vcpu_count = 2
-memory_mib = 4096
-disk_size_gib = 40
+concurrent = 10
 
-[runners.autoscaler.connector_config]
-os = "linux"
-arch = "amd64"
-protocol = "ssh"
-protocol_port = 22
-username = "core"
-password = "super-secret-password"
+[[runners]]
+  name = "libvirt-flatcar-autoscaler"
+  url = "https://gitlab.example.com"
+  token = "REPLACE_ME"
+  executor = "docker-autoscaler"
+  shell = "sh"
+
+  [runners.docker]
+    image = "alpine:3.20"
+    pull_policy = "if-not-present"
+
+  [runners.autoscaler]
+    plugin = "fleeting-plugin-libvirt"
+
+    capacity_per_instance = 1
+    max_use_count = 1
+    max_instances = 10
+    delete_instances_on_shutdown = true
+
+    [runners.autoscaler.plugin_config]
+      uri = "qemu:///system"
+      pool_name = "default"
+      base_volume_name = "flatcar_production_qemu_image.img"
+      network_name = "default"
+      state_dir = "/var/lib/libvirt/gitlab-runner-virt-plugin"
+      domain_prefix = "gitlab-runner"
+      max_size = 10
+      vcpu_count = 2
+      memory_mib = 4096
+      disk_size_gib = 40
+      address_source = "lease"
+
+    [runners.autoscaler.connector_config]
+      os = "linux"
+      arch = "amd64"
+      protocol = "ssh"
+      protocol_port = 22
+      username = "core"
+      password = "super-secret-password"
+      use_static_credentials = true
+      timeout = "10m"
+
+    [[runners.autoscaler.policy]]
+      idle_count = 1
+      idle_time = "20m0s"
 ```
+
+Reuse behavior:
+
+- `max_use_count = 1` means each VM is used for exactly one job and then deleted.
+- `max_use_count = 5` means a VM can be reused for up to five jobs before Runner schedules it for removal.
+- `capacity_per_instance = 1` is the safest default for isolated ephemeral runners.
+- `concurrent` should typically be `max_instances * capacity_per_instance`.
 
 If you use SSH keys instead of passwords, set `connector_config.key`. The plugin will derive the matching public key and install it via Ignition.
 
@@ -118,4 +153,3 @@ go build ./...
 - Flatcar libvirt provisioning: https://www.flatcar.org/docs/latest/installing/virtualization/libvirt/
 - Flatcar authentication examples: https://www.flatcar.org/docs/latest/setup/customization/configuring-flatcar/
 - libvirt domain XML and `fw_cfg`: https://libvirt.org/formatdomain.html
-

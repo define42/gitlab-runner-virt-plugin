@@ -206,7 +206,7 @@ func (g *InstanceGroup) Init(ctx context.Context, logger hclog.Logger, settings 
 		return provider.ProviderInfo{}, fmt.Errorf("connector_config.password or connector_config.key must be set")
 	}
 
-	if err := os.MkdirAll(g.StateDir, 0o755); err != nil {
+	if err := os.MkdirAll(g.StateDir, 0o700); err != nil {
 		return provider.ProviderInfo{}, fmt.Errorf("creating state directory: %w", err)
 	}
 
@@ -564,7 +564,7 @@ func (g *InstanceGroup) createInstance(conn *libvirt.Connect, pool *libvirt.Stor
 	}
 
 	ignitionPath := g.ignitionPath(name)
-	if err := writeFileAtomic(ignitionPath, ignition, 0o644); err != nil {
+	if err := writeFileAtomic(ignitionPath, ignition, 0o600); err != nil {
 		return fmt.Errorf("writing ignition file: %w", err)
 	}
 

@@ -8,9 +8,11 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -434,8 +436,25 @@ func waitForSSHCommand(ctx context.Context, info provider.ConnectInfo, privateKe
 	var lastOutput string
 	var lastErr error
 
+	var (
+		trustedKey     ssh.PublicKey
+		trustedKeyLock sync.Mutex
+	)
+	hostKeyCallback := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		trustedKeyLock.Lock()
+		defer trustedKeyLock.Unlock()
+		if trustedKey == nil {
+			trustedKey = key
+			return nil
+		}
+		if !bytes.Equal(trustedKey.Marshal(), key.Marshal()) {
+			return fmt.Errorf("host key mismatch for %s", hostname)
+		}
+		return nil
+	}
+
 	for {
-		lastOutput, lastErr = runSSHCommand(info, privateKeyPEM, command)
+		lastOutput, lastErr = runSSHCommand(info, privateKeyPEM, command, hostKeyCallback)
 		if lastErr == nil {
 			return lastOutput, nil
 		}
@@ -448,7 +467,7 @@ func waitForSSHCommand(ctx context.Context, info provider.ConnectInfo, privateKe
 	}
 }
 
-func runSSHCommand(info provider.ConnectInfo, privateKeyPEM []byte, command string) (string, error) {
+func runSSHCommand(info provider.ConnectInfo, privateKeyPEM []byte, command string, hostKeyCallback ssh.HostKeyCallback) (string, error) {
 	authMethods := make([]ssh.AuthMethod, 0, 2)
 
 	if len(privateKeyPEM) > 0 {
@@ -465,7 +484,7 @@ func runSSHCommand(info provider.ConnectInfo, privateKeyPEM []byte, command stri
 	config := &ssh.ClientConfig{
 		User:            info.Username,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         10 * time.Second,
 	}
 

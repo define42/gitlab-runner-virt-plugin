@@ -1,5 +1,7 @@
 # gitlab-runner-virt-plugin
 
+[![codecov](https://codecov.io/gh/define42/gitlab-runner-virt-plugin/graph/badge.svg?token=Q4AR5750VG)](https://codecov.io/gh/define42/gitlab-runner-virt-plugin)
+
 `gitlab-runner-virt-plugin` is a [Fleeting](https://gitlab.com/gitlab-org/fleeting/fleeting) provider for GitLab Runner `docker-autoscaler` setups backed by libvirt.
 
 It does three main things:

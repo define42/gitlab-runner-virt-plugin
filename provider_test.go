@@ -21,7 +21,6 @@ import (
 )
 
 const testRepoRootQCOW2 = "flatcar_production_qemu_image.qcow2"
-const fullBootTestEnvVar = "LIBVIRT_FULL_BOOT_TEST"
 
 type repoRootPool struct {
 	Name          string
@@ -136,10 +135,6 @@ func TestResolveBaseVolumeAndCloneRepoRootQCOW2(t *testing.T) {
 
 func TestInstanceGroupLifecycleBootsFlatcarAndDockerIsReachable(t *testing.T) {
 	t.Helper()
-
-	if os.Getenv(fullBootTestEnvVar) == "" {
-		t.Skipf("set %s=1 to run the full libvirt boot and SSH integration test", fullBootTestEnvVar)
-	}
 
 	conn := requireSystemLibvirt(t)
 	defer closeConnect(conn)

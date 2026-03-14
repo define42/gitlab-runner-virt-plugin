@@ -210,6 +210,9 @@ func TestInstanceGroupLifecycleBootsFlatcarAndDockerIsReachable(t *testing.T) {
 	if connectInfo.ExternalAddr == "" {
 		t.Fatal("ConnectInfo() returned an empty ExternalAddr")
 	}
+	if err := waitForHeartbeat(ctx, group, instanceID); err != nil {
+		t.Fatalf("waitForHeartbeat() error = %v", err)
+	}
 
 	if output, err := waitForSSHCommand(
 		ctx,
@@ -406,6 +409,21 @@ func waitForConnectInfo(ctx context.Context, group *InstanceGroup, instanceID st
 				return provider.ConnectInfo{}, fmt.Errorf("timed out waiting for connect info for %q: %w", instanceID, err)
 			}
 			return provider.ConnectInfo{}, fmt.Errorf("timed out waiting for connect info for %q: %w", instanceID, ctx.Err())
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func waitForHeartbeat(ctx context.Context, group *InstanceGroup, instanceID string) error {
+	for {
+		err := group.Heartbeat(ctx, instanceID)
+		if err == nil {
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return fmt.Errorf("timed out waiting for heartbeat success for %q: %w", instanceID, err)
 		}
 
 		time.Sleep(2 * time.Second)

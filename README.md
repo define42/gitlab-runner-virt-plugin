@@ -43,7 +43,7 @@ Common fields:
 {
   "uri": "qemu:///system",
   "pool_name": "default",
-  "base_volume_name": "flatcar-stable.qcow2",
+  "base_volume_name": "flatcar_production_qemu_image.img",
   "network_name": "default",
   "state_dir": "/var/lib/libvirt/gitlab-runner-virt-plugin",
   "domain_prefix": "gitlab-runner",
@@ -80,7 +80,7 @@ Example `config.toml` fragments for a GitLab Runner using `docker-autoscaler`:
 [runners.autoscaler.plugin_config]
 uri = "qemu:///system"
 pool_name = "default"
-base_volume_name = "flatcar-stable.qcow2"
+base_volume_name = "flatcar_production_qemu_image.img"
 network_name = "default"
 state_dir = "/var/lib/libvirt/gitlab-runner-virt-plugin"
 domain_prefix = "gitlab-runner"

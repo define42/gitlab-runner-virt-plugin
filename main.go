@@ -1,7 +1,8 @@
 package main
 
 import (
-	"context"
+	"sync"
+	"time"
 
 	"github.com/hashicorp/go-hclog"
 	"gitlab.com/gitlab-org/fleeting/fleeting/plugin"
@@ -9,58 +10,32 @@ import (
 )
 
 type InstanceGroup struct {
-	APIEndpoint string `json:"api_endpoint"`
-	Token       string `json:"token"`
-	PoolName    string `json:"pool_name"`
-}
+	URI            string `json:"uri"`
+	PoolName       string `json:"pool_name"`
+	BaseVolumeName string `json:"base_volume_name,omitempty"`
+	BaseVolumePath string `json:"base_volume_path,omitempty"`
+	NetworkName    string `json:"network_name,omitempty"`
+	DomainPrefix   string `json:"domain_prefix,omitempty"`
+	StateDir       string `json:"state_dir,omitempty"`
+	MaxSize        int    `json:"max_size"`
+	VCPUCount      uint   `json:"vcpu_count,omitempty"`
+	MemoryMiB      uint   `json:"memory_mib,omitempty"`
+	DiskSizeGiB    uint   `json:"disk_size_gib,omitempty"`
+	DomainType     string `json:"domain_type,omitempty"`
+	MachineType    string `json:"machine_type,omitempty"`
+	AddressSource  string `json:"address_source,omitempty"`
 
-func (g *InstanceGroup) Init(ctx context.Context, log hclog.Logger, settings provider.Settings) (provider.ProviderInfo, error) {
-	// Initialize API client, validate config, return provider metadata
-	return provider.ProviderInfo{}, nil
-}
-
-// Increase requests more instances to be created. It returns how many
-// instances were successfully requested.
-func (g *InstanceGroup) Increase(ctx context.Context, delta int) (int, error) {
-	// Provision delta new instances
-	return delta, nil
-}
-
-// Decrease removes the specified instances from the instance group. It
-// returns instance IDs of successful requests for removal.
-func (g *InstanceGroup) Decrease(ctx context.Context, ids []string) ([]string, error) {
-	// Delete or scale down listed instances
-	return ids, nil
-}
-
-// Update updates instance data from the instance group, passing a function
-// to perform instance reconciliation.
-func (g *InstanceGroup) Update(ctx context.Context, update func(string, provider.State)) error {
-	// Report current instance states back to Runner
-	return nil
-}
-
-// ConnectInfo returns additional information about an instance,
-// useful for creating a connection.
-func (g *InstanceGroup) ConnectInfo(ctx context.Context, id string) (provider.ConnectInfo, error) {
-	// Return SSH/WinRM connection info for a specific instance
-	return provider.ConnectInfo{}, nil
-}
-
-// Shutdown performs any cleanup tasks required when the plugin is to shutdown.
-func (g *InstanceGroup) Shutdown(ctx context.Context) error {
-	return nil
-}
-
-// Heartbeat returns an error if there has been an issue detected with a given instance.
-// useful for checking if an instance is still alive.
-func (g *InstanceGroup) Heartbeat(ctx context.Context, instance string) error {
-	return nil
+	mu             sync.Mutex           `json:"-"`
+	settings       provider.Settings    `json:"-"`
+	logger         hclog.Logger         `json:"-"`
+	deleting       map[string]time.Time `json:"-"`
+	passwordHash   string               `json:"-"`
+	authorizedKeys []string             `json:"-"`
 }
 
 func main() {
 	plugin.Main(&InstanceGroup{}, plugin.VersionInfo{
-		Name:      "fleeting-plugin-myplatform",
+		Name:      "fleeting-plugin-libvirt",
 		Version:   "dev",
 		Revision:  "HEAD",
 		Reference: "HEAD",

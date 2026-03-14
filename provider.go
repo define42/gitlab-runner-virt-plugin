@@ -60,7 +60,18 @@ var (
   </os>
   <features>
     <acpi/>
+    <apic/>
   </features>
+  <cpu mode='host-passthrough' check='none' migratable='on'/>
+  <clock offset='utc'>
+    <timer name='rtc' tickpolicy='catchup'/>
+    <timer name='pit' tickpolicy='delay'/>
+    <timer name='hpet' present='no'/>
+  </clock>
+  <pm>
+    <suspend-to-mem enabled='no'/>
+    <suspend-to-disk enabled='no'/>
+  </pm>
   <on_poweroff>destroy</on_poweroff>
   <on_reboot>restart</on_reboot>
   <on_crash>destroy</on_crash>
@@ -68,12 +79,12 @@ var (
     <disk type='file' device='disk'>
       <driver name='qemu' type='{{xml .DiskFormat}}'/>
       <source file='{{xml .DiskPath}}'/>
-      <target dev='vda' bus='virtio'/>
+      <target dev='hda' bus='ide'/>
     </disk>
     <interface type='network'>
       <mac address='{{xml .MACAddress}}'/>
       <source network='{{xml .NetworkName}}'/>
-      <model type='virtio'/>
+      <model type='e1000'/>
     </interface>
     <serial type='pty'>
       <target port='0'/>
@@ -81,7 +92,6 @@ var (
     <console type='pty'>
       <target type='serial' port='0'/>
     </console>
-    <graphics type='none'/>
     <rng model='virtio'>
       <backend model='random'>/dev/urandom</backend>
     </rng>

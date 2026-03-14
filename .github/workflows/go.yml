@@ -102,6 +102,18 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release_branches: main
 
+      # -------------------------------
+      # Build release binary
+      # -------------------------------
+      - name: Build release binary
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tag.outputs.new_tag != ''
+        run: |
+          go build -ldflags="-s -w" -o gitlab-runner-virt-plugin_linux_amd64 .
+        env:
+          CGO_ENABLED: 1
+          GOOS: linux
+          GOARCH: amd64
+
       - name: Create GitHub release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tag.outputs.new_tag != ''
         uses: ncipollo/release-action@v1
@@ -109,6 +121,7 @@ jobs:
           tag: ${{ steps.tag.outputs.new_tag }}
           name: Release ${{ steps.tag.outputs.new_tag }}
           body: ${{ steps.tag.outputs.changelog }}
+          artifacts: "gitlab-runner-virt-plugin_linux_amd64"
 
       # -------------------------------
       # Container build & push (GHCR)

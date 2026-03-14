@@ -77,14 +77,14 @@ var (
   <on_crash>destroy</on_crash>
   <devices>
     <disk type='file' device='disk'>
-      <driver name='qemu' type='{{xml .DiskFormat}}'/>
+      <driver name='qemu' type='{{xml .DiskFormat}}' cache='writeback'/>
       <source file='{{xml .DiskPath}}'/>
-      <target dev='hda' bus='ide'/>
+      <target dev='vda' bus='virtio'/>
     </disk>
     <interface type='network'>
       <mac address='{{xml .MACAddress}}'/>
       <source network='{{xml .NetworkName}}'/>
-      <model type='e1000'/>
+      <model type='virtio'/>
     </interface>
     <serial type='pty'>
       <target port='0'/>

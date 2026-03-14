@@ -22,6 +22,44 @@ import (
 
 const testRepoRootQCOW2 = "flatcar_production_qemu_image.qcow2"
 
+func TestRenderDomainXMLUsesVirtioDevices(t *testing.T) {
+	xml, err := renderDomainXML(domainTemplateData{
+		DomainType:    "kvm",
+		Name:          "test-vm",
+		Description:   "test",
+		MemoryMiB:     2048,
+		VCPUCount:     2,
+		Arch:          "x86_64",
+		DiskFormat:    "qcow2",
+		DiskPath:      "/var/lib/libvirt/images/test-vm.img",
+		MACAddress:    "52:54:00:ab:cd:ef",
+		NetworkName:   "default",
+		FWCfgArgument: "name=opt/org.flatcar-linux/config,file=/tmp/test.ign",
+	})
+	if err != nil {
+		t.Fatalf("renderDomainXML() error = %v", err)
+	}
+
+	if !strings.Contains(xml, "bus='virtio'") {
+		t.Error("renderDomainXML() disk does not use virtio bus")
+	}
+	if !strings.Contains(xml, "dev='vda'") {
+		t.Error("renderDomainXML() disk target device is not vda")
+	}
+	if !strings.Contains(xml, "cache='writeback'") {
+		t.Error("renderDomainXML() disk driver does not set cache=writeback")
+	}
+	if !strings.Contains(xml, "<model type='virtio'/>") {
+		t.Error("renderDomainXML() network interface does not use virtio model")
+	}
+	if strings.Contains(xml, "bus='ide'") {
+		t.Error("renderDomainXML() disk still uses deprecated ide bus")
+	}
+	if strings.Contains(xml, "type='e1000'") {
+		t.Error("renderDomainXML() network still uses deprecated e1000 model")
+	}
+}
+
 type repoRootPool struct {
 	Name          string
 	Dir           string

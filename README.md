@@ -150,6 +150,15 @@ go build ./...
 - Managed instances are identified by the configured `domain_prefix`.
 - The plugin deletes the libvirt domain definition, the cloned storage volume, and the generated Ignition file when Runner scales an instance down.
 
+## Performance Notes
+
+VMs are configured with VirtIO drivers for faster boot and I/O:
+
+- **Disk**: uses `bus='virtio'` with `cache='writeback'` instead of emulated IDE, reducing disk I/O latency during boot.
+- **Network**: uses `model='virtio'` instead of emulated e1000, reducing network initialization time.
+
+Flatcar Linux ships with native VirtIO drivers so these settings are safe and recommended.
+
 ## References
 
 - Flatcar libvirt provisioning: https://www.flatcar.org/docs/latest/installing/virtualization/libvirt/

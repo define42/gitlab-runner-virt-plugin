@@ -2,6 +2,8 @@
 
 [![codecov](https://codecov.io/gh/define42/gitlab-runner-virt-plugin/graph/badge.svg?token=Q4AR5750VG)](https://codecov.io/gh/define42/gitlab-runner-virt-plugin)
 
+[![Build Status](https://github.com/define42/gitlab-runner-virt-plugin/actions/workflows/go.yml/badge.svg)](https://github.com/define42/gitlab-runner-virt-plugin/actions/)
+
 `gitlab-runner-virt-plugin` is a [Fleeting](https://gitlab.com/gitlab-org/fleeting/fleeting) provider for GitLab Runner `docker-autoscaler` setups backed by libvirt.
 When configured for single-use instances, it gives GitLab Runner a per-job sandbox VM model similar to standard GitHub-hosted runners.
 

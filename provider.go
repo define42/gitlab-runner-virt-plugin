@@ -889,7 +889,13 @@ func (g *InstanceGroup) waitForAddress(ctx context.Context, conn *libvirt.Connec
 			return "", fmt.Errorf("timed out waiting for a libvirt-discovered address for domain")
 		}
 
-		time.Sleep(time.Second)
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		}
 	}
 }
 
@@ -1087,11 +1093,16 @@ func renderDomainXML(data domainTemplateData) (string, error) {
 }
 
 func renderVolumeOverlayXML(name string, details baseVolumeDetails) string {
+	backingFormat := details.Format
+	if backingFormat == "" {
+		backingFormat = "qcow2"
+	}
 	return fmt.Sprintf(
-		"<volume><name>%s</name><capacity unit='bytes'>%d</capacity><target><format type='qcow2'/></target><backingStore><path>%s</path><format type='qcow2'/></backingStore></volume>",
+		"<volume><name>%s</name><capacity unit='bytes'>%d</capacity><target><format type='qcow2'/></target><backingStore><path>%s</path><format type='%s'/></backingStore></volume>",
 		escapeXML(name),
 		details.Capacity,
 		escapeXML(details.Path),
+		escapeXML(backingFormat),
 	)
 }
 
@@ -1101,6 +1112,14 @@ func volumeFormatFromXML(desc string) string {
 		return ""
 	}
 	return vol.Target.Format.Type
+}
+
+func volumeBackingStoreFormatFromXML(desc string) string {
+	var vol storageVolumeXML
+	if err := xml.Unmarshal([]byte(desc), &vol); err != nil {
+		return ""
+	}
+	return vol.BackingStore.Format.Type
 }
 
 func volumeBackingStorePathFromXML(desc string) string {
@@ -1285,7 +1304,6 @@ func validatePEMCertificateBundle(content []byte) error {
 		return fmt.Errorf("file is empty")
 	}
 
-	foundCertificates := false
 	for len(rest) > 0 {
 		block, remaining := pem.Decode(rest)
 		if block == nil {
@@ -1298,12 +1316,7 @@ func validatePEMCertificateBundle(content []byte) error {
 			return fmt.Errorf("parsing certificate: %w", err)
 		}
 
-		foundCertificates = true
 		rest = bytes.TrimSpace(remaining)
-	}
-
-	if !foundCertificates {
-		return fmt.Errorf("file does not contain any certificates")
 	}
 
 	return nil

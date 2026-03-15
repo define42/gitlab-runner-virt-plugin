@@ -837,16 +837,44 @@ func TestXMLAndAddressHelpers(t *testing.T) {
 
 	overlay := renderVolumeOverlayXML("overlay<&>.img", baseVolumeDetails{
 		Capacity: 2048,
+		Format:   "qcow2",
 		Path:     "/images/base<&>.qcow2",
 	})
 	if got := volumeFormatFromXML(overlay); got != "qcow2" {
 		t.Fatalf("volumeFormatFromXML() = %q, want %q", got, "qcow2")
 	}
+	if got := volumeBackingStoreFormatFromXML(overlay); got != "qcow2" {
+		t.Fatalf("volumeBackingStoreFormatFromXML() = %q, want %q", got, "qcow2")
+	}
 	if got := volumeBackingStorePathFromXML(overlay); got != "/images/base<&>.qcow2" {
 		t.Fatalf("volumeBackingStorePathFromXML() = %q, want %q", got, "/images/base<&>.qcow2")
 	}
+
+	rawOverlay := renderVolumeOverlayXML("overlay-raw.img", baseVolumeDetails{
+		Capacity: 2048,
+		Format:   "raw",
+		Path:     "/images/base.img",
+	})
+	if got := volumeFormatFromXML(rawOverlay); got != "qcow2" {
+		t.Fatalf("volumeFormatFromXML(raw backing) = %q, want %q (overlay is always qcow2)", got, "qcow2")
+	}
+	if got := volumeBackingStoreFormatFromXML(rawOverlay); got != "raw" {
+		t.Fatalf("volumeBackingStoreFormatFromXML(raw backing) = %q, want %q", got, "raw")
+	}
+
+	emptyFormatOverlay := renderVolumeOverlayXML("overlay-default.img", baseVolumeDetails{
+		Capacity: 1024,
+		Path:     "/images/base.qcow2",
+	})
+	if got := volumeBackingStoreFormatFromXML(emptyFormatOverlay); got != "qcow2" {
+		t.Fatalf("volumeBackingStoreFormatFromXML(empty format) = %q, want %q (default)", got, "qcow2")
+	}
+
 	if got := volumeFormatFromXML("definitely-not-xml"); got != "" {
 		t.Fatalf("volumeFormatFromXML(invalid) = %q, want empty string", got)
+	}
+	if got := volumeBackingStoreFormatFromXML("definitely-not-xml"); got != "" {
+		t.Fatalf("volumeBackingStoreFormatFromXML(invalid) = %q, want empty string", got)
 	}
 
 	ifaces := []libvirt.DomainInterface{

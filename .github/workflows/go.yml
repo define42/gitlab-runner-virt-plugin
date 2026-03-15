@@ -121,7 +121,7 @@ jobs:
           tag: ${{ steps.tag.outputs.new_tag }}
           name: Release ${{ steps.tag.outputs.new_tag }}
           body: ${{ steps.tag.outputs.changelog }}
-          artifacts: "gitlab-runner-virt-plugin_linux_amd64"
+          artifacts: "fleeting-plugin-libvirt_linux_amd64"
 
       # -------------------------------
       # Container build & push (GHCR)

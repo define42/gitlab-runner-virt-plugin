@@ -1,4 +1,4 @@
-module gitlab-runner-virt-plugin
+module github.com/define42/gitlab-runner-virt-plugin
 
 go 1.25.0
 

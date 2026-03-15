@@ -22,6 +22,8 @@ The generated Ignition config:
 
 - A working local libvirt daemon, typically reachable as `qemu:///system`
 - A Flatcar QEMU image already imported into a libvirt storage pool
+  The documented Flatcar image is `https://stable.release.flatcar-linux.net/amd64-usr/current/flatcar_production_qemu_image.img`
+  Copy the image onto the libvirt host, typically into `/var/lib/libvirt/images/`, before importing it into the storage pool.
 - A libvirt network that hands out DHCP leases
 - A `state_dir` path that is readable by the QEMU/libvirt host process
 
@@ -143,11 +145,18 @@ If you use SSH keys instead of passwords, set `connector_config.key`. The plugin
 go build ./...
 ```
 
+Install the plugin binary with:
+
+```bash
+install -m 0755 fleeting-plugin-libvirt_linux_amd64 /usr/local/bin/fleeting-plugin-libvirt
+```
+
 ## Operational Notes
 
 - Imported Flatcar images should be the official QEMU/libvirt-ready image format.
 - `state_dir` must exist on the hypervisor host filesystem because libvirt passes the Ignition file to QEMU by host path.
 - Managed instances are identified by the configured `domain_prefix`.
+- `virsh list` can be used to see active VMs.
 - The plugin deletes the libvirt domain definition, the cloned storage volume, and the generated Ignition file when Runner scales an instance down.
 
 ## References

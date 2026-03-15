@@ -20,7 +20,7 @@ import (
 	"libvirt.org/go/libvirt"
 )
 
-const testRepoRootQCOW2 = "flatcar_production_qemu_image.qcow2"
+const testRepoRootQCOW2 = "flatcar_production_qemu_image.img" // This is a qcow2 iamge - download it from https://stable.release.flatcar-linux.net/amd64-usr/current/flatcar_production_qemu_image.img
 
 type repoRootPool struct {
 	Name          string

@@ -629,6 +629,57 @@ func TestInstanceGroupDeleteInstanceWithTestDriver(t *testing.T) {
 	}
 }
 
+func TestInstanceGroupCreateInstanceCleansUpWhenResizeFailsWithTestDriver(t *testing.T) {
+	conn := requireTestDriverConnection(t)
+	defer closeConnect(conn)
+
+	pool, err := conn.LookupStoragePoolByName(testDriverPoolName)
+	if err != nil {
+		t.Fatalf("LookupStoragePoolByName(%q) error = %v", testDriverPoolName, err)
+	}
+	defer pool.Free()
+
+	group := &InstanceGroup{
+		StateDir:    t.TempDir(),
+		DiskSizeGiB: 1,
+		settings: provider.Settings{
+			ConnectorConfig: provider.ConnectorConfig{
+				Username: "core",
+			},
+		},
+	}
+
+	id := fmt.Sprintf("resize-fail-%d", time.Now().UnixNano())
+	err = group.createInstance(conn, pool, baseVolumeDetails{
+		Capacity: 1,
+		Format:   "qcow2",
+		Path:     "/base.qcow2",
+	}, id)
+	if err == nil {
+		t.Fatal("createInstance() error = nil, want resize failure")
+	}
+	if !strings.Contains(err.Error(), "resizing cloned volume") {
+		t.Fatalf("createInstance() error = %v, want resize failure detail", err)
+	}
+
+	if err := pool.Refresh(0); err != nil {
+		t.Fatalf("pool.Refresh() error = %v", err)
+	}
+
+	_, err = pool.LookupStorageVolByName(group.volumeName(id))
+	if !errors.Is(err, libvirt.ERR_NO_STORAGE_VOL) {
+		t.Fatalf("LookupStorageVolByName(%q) error = %v, want %v", group.volumeName(id), err, libvirt.ERR_NO_STORAGE_VOL)
+	}
+
+	if _, err := conn.LookupDomainByName(id); !errors.Is(err, libvirt.ERR_NO_DOMAIN) {
+		t.Fatalf("LookupDomainByName(%q) error = %v, want %v", id, err, libvirt.ERR_NO_DOMAIN)
+	}
+
+	if _, err := os.Stat(group.ignitionPath(id)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat(%q) error = %v, want %v", group.ignitionPath(id), err, os.ErrNotExist)
+	}
+}
+
 func TestInstanceGroupHeartbeatReturnsUnhealthyForMissingDomain(t *testing.T) {
 	conn := requireTestDriverConnection(t)
 	defer closeConnect(conn)

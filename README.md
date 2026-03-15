@@ -212,10 +212,3 @@ install -m 0755 fleeting-plugin-libvirt_linux_amd64 /usr/local/bin/fleeting-plug
 - `virsh list` can be used to see active VMs.
 - The plugin deletes the libvirt domain definition, the cloned storage volume, and the generated Ignition file when Runner scales an instance down.
 
-## References
-
-- Flatcar libvirt provisioning: https://www.flatcar.org/docs/latest/installing/virtualization/libvirt/
-- Flatcar authentication examples: https://www.flatcar.org/docs/latest/setup/customization/configuring-flatcar/
-- libvirt domain XML and `fw_cfg`: https://libvirt.org/formatdomain.html
-- GitHub-hosted runners: https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners
-- GitHub Actions security hardening: https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions

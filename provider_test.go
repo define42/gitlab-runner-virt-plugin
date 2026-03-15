@@ -247,6 +247,89 @@ func TestInstanceGroupLifecycleBootsFlatcarAndDockerIsReachable(t *testing.T) {
 	}
 }
 
+func TestInstanceGroupShutdownRemovesAllManagedVMs(t *testing.T) {
+	conn := requireSystemLibvirt(t)
+	defer closeConnect(conn)
+
+	repoRoot := repoRootDir(t)
+	requireRepoRootQCOW2(t, repoRoot)
+	requireDefaultNetwork(t, conn)
+	poolRef := createRepoRootPool(t, conn, repoRoot)
+	stateDir := createAccessibleStateDir(t, repoRoot)
+
+	group := &InstanceGroup{
+		URI:            defaultURI,
+		PoolName:       poolRef.Name,
+		BaseVolumeName: testRepoRootQCOW2,
+		NetworkName:    defaultNetworkName,
+		StateDir:       stateDir,
+		DomainPrefix:   fmt.Sprintf("provider-shutdown-%d", time.Now().UnixNano()),
+		MaxSize:        2,
+		VCPUCount:      2,
+		MemoryMiB:      2048,
+		AddressSource:  "lease",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	_, err := group.Init(ctx, hclog.NewNullLogger(), provider.Settings{
+		ConnectorConfig: provider.ConnectorConfig{
+			OS:       "linux",
+			Arch:     "amd64",
+			Protocol: provider.ProtocolSSH,
+			Username: "core",
+			Password: "test-password",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	// Safety net: ensure VMs are cleaned up even if the test fails before Shutdown.
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cleanupCancel()
+		_ = group.Shutdown(cleanupCtx)
+	})
+
+	created, err := group.Increase(ctx, 2)
+	if err != nil {
+		t.Fatalf("Increase() error = %v", err)
+	}
+	if created != 2 {
+		t.Fatalf("Increase() created = %d, want 2", created)
+	}
+
+	// Confirm that managed instances exist before calling Shutdown.
+	var beforeCount int
+	if err := group.Update(ctx, func(_ string, _ provider.State) {
+		beforeCount++
+	}); err != nil {
+		t.Fatalf("Update() before Shutdown error = %v", err)
+	}
+	if beforeCount == 0 {
+		t.Fatal("expected managed instances to exist before Shutdown")
+	}
+
+	// Shutdown must remove all VMs that carry the domain prefix — without a
+	// prior Decrease call.
+	if err := group.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	// After Shutdown, Update must report no remaining managed instances.
+	var afterCount int
+	if err := group.Update(ctx, func(_ string, _ provider.State) {
+		afterCount++
+	}); err != nil {
+		t.Fatalf("Update() after Shutdown error = %v", err)
+	}
+	if afterCount != 0 {
+		t.Fatalf("Shutdown() left %d managed instance(s) behind, want 0", afterCount)
+	}
+}
+
 func requireSystemLibvirt(t *testing.T) *libvirt.Connect {
 	t.Helper()
 

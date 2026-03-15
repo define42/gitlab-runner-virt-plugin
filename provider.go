@@ -440,11 +440,53 @@ func (g *InstanceGroup) ConnectInfo(ctx context.Context, id string) (provider.Co
 	}, nil
 }
 
-func (g *InstanceGroup) Shutdown(context.Context) error {
+func (g *InstanceGroup) Shutdown(ctx context.Context) error {
 	if g.logger != nil {
 		g.logger.Info("libvirt plugin shutdown requested")
 	}
-	return nil
+
+	conn, err := g.connect()
+	if err != nil {
+		return err
+	}
+	defer closeConnect(conn)
+
+	pool, err := conn.LookupStoragePoolByName(g.PoolName)
+	if err != nil {
+		return fmt.Errorf("looking up storage pool %q: %w", g.PoolName, err)
+	}
+	defer pool.Free()
+
+	domains, err := conn.ListAllDomains(0)
+	if err != nil {
+		return fmt.Errorf("listing libvirt domains: %w", err)
+	}
+
+	var errs []error
+	for i := range domains {
+		dom := &domains[i]
+		name, err := dom.GetName()
+		if err != nil {
+			_ = dom.Free()
+			errs = append(errs, fmt.Errorf("reading domain name: %w", err))
+			continue
+		}
+
+		if !g.managesDomain(name) {
+			_ = dom.Free()
+			continue
+		}
+		_ = dom.Free()
+
+		if g.logger != nil {
+			g.logger.Info("deleting instance on shutdown", "instance", name)
+		}
+		if err := g.deleteInstance(conn, pool, name); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 func (g *InstanceGroup) Heartbeat(ctx context.Context, id string) error {

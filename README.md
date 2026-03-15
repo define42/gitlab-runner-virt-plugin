@@ -16,6 +16,8 @@ The generated Ignition config:
 - creates or updates the SSH user from `connector_config.username`
 - hashes `connector_config.password` into Ignition `passwordHash`
 - derives and installs an SSH public key when `connector_config.key` is set
+- copies additional PEM-encoded CA root certificates from `plugin_config.ca_certificates_path` when configured
+- refreshes Flatcar's system trust store before `docker.service` starts when custom CAs are provided
 - enables `docker.service`
 - sets `/etc/hostname` to the VM name
 
@@ -55,6 +57,7 @@ Common fields:
   "base_volume_name": "flatcar_production_qemu_image.img",
   "network_name": "default",
   "state_dir": "/var/lib/libvirt/gitlab-runner-virt-plugin",
+  "ca_certificates_path": "/etc/gitlab-runner/ca-roots",
   "domain_prefix": "gitlab-runner",
   "max_size": 10,
   "vcpu_count": 2,
@@ -72,6 +75,7 @@ Supported fields:
 - `base_volume_path`: source Flatcar volume path, alternative to `base_volume_name`
 - `network_name`: libvirt network name, default `default`
 - `state_dir`: where generated Ignition files are written, default `/var/lib/libvirt/gitlab-runner-virt-plugin`
+- `ca_certificates_path`: optional host path to a PEM certificate file or directory of PEM certificate files; the plugin writes them into `/etc/ssl/certs` inside the VM and runs `update-ca-certificates`
 - `domain_prefix`: prefix for managed domain names, default `gitlab-runner`
 - `max_size`: maximum number of VMs Runner may request
 - `vcpu_count`: vCPU count per VM, default `2`
@@ -140,6 +144,7 @@ shutdown_timeout = 0
       base_volume_name = "flatcar_production_qemu_image.img"
       network_name = "default"
       state_dir = "/var/lib/libvirt/gitlab-runner-virt-plugin"
+      ca_certificates_path = "/etc/gitlab-runner/ca-roots"
       domain_prefix = "gitlab-runner"
       max_size = 10
       vcpu_count = 1
@@ -200,6 +205,7 @@ install -m 0755 fleeting-plugin-libvirt_linux_amd64 /usr/local/bin/fleeting-plug
 
 - Imported Flatcar images should be the official QEMU/libvirt-ready image format.
 - `state_dir` must exist on the hypervisor host filesystem because libvirt passes the Ignition file to QEMU by host path.
+- `ca_certificates_path` is read on the host running the plugin. It may point to a single PEM file or a directory of PEM files.
 - Managed instances are identified by the configured `domain_prefix`.
 - `virsh list` can be used to see active VMs.
 - The plugin deletes the libvirt domain definition, the cloned storage volume, and the generated Ignition file when Runner scales an instance down.

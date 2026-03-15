@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -40,12 +43,14 @@ const (
 	managedDescriptionPrefix = "managed-by:gitlab-runner-virt-plugin"
 	ignitionVersion          = "3.3.0"
 	flatcarIgnitionFWCfgName = "opt/org.flatcar-linux/config"
+	customCAUpdateUnitName   = "gitlab-runner-update-ca-certificates.service"
 )
 
 var (
 	_ provider.InstanceGroup = (*InstanceGroup)(nil)
 
 	domainPrefixSanitizer = regexp.MustCompile(`[^a-zA-Z0-9-]+`)
+	caFileNameSanitizer   = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 	domainXMLTmpl         = template.Must(template.New("domain").Funcs(template.FuncMap{
 		"xml": escapeXML,
 	}).Parse(`
@@ -190,8 +195,9 @@ type ignitionSystemd struct {
 }
 
 type ignitionUnit struct {
-	Name    string `json:"name"`
-	Enabled *bool  `json:"enabled,omitempty"`
+	Name     string `json:"name"`
+	Enabled  *bool  `json:"enabled,omitempty"`
+	Contents string `json:"contents,omitempty"`
 }
 
 func (g *InstanceGroup) Init(ctx context.Context, logger hclog.Logger, settings provider.Settings) (provider.ProviderInfo, error) {
@@ -202,6 +208,9 @@ func (g *InstanceGroup) Init(ctx context.Context, logger hclog.Logger, settings 
 		return provider.ProviderInfo{}, err
 	}
 	g.settings.ConnectorConfig = g.normalizedConnectorConfig(settings.ConnectorConfig)
+	g.passwordHash = ""
+	g.authorizedKeys = nil
+	g.caCertificateFiles = nil
 
 	if g.settings.Protocol != provider.ProtocolSSH {
 		return provider.ProviderInfo{}, fmt.Errorf("flatcar instances only support ssh, got %q", g.settings.Protocol)
@@ -235,6 +244,14 @@ func (g *InstanceGroup) Init(ctx context.Context, logger hclog.Logger, settings 
 		} else {
 			g.authorizedKeys = keys
 		}
+	}
+
+	if g.CACertificatesPath != "" {
+		files, err := loadCACertificateIgnitionFiles(g.CACertificatesPath)
+		if err != nil {
+			return provider.ProviderInfo{}, fmt.Errorf("loading ca certificates: %w", err)
+		}
+		g.caCertificateFiles = files
 	}
 
 	g.mu.Lock()
@@ -886,28 +903,36 @@ func (g *InstanceGroup) renderIgnition(hostname string) ([]byte, error) {
 		user.Groups = []string{"sudo", "docker"}
 	}
 
+	files := []ignitionFile{
+		{
+			Path:      "/etc/hostname",
+			Mode:      intPtr(0o644),
+			Overwrite: boolPtr(true),
+			Contents: ignitionFileContents{
+				Source: dataURL(hostname + "\n"),
+			},
+		},
+	}
+	files = append(files, g.caCertificateFiles...)
+
+	units := []ignitionUnit{
+		{
+			Name:    "docker.service",
+			Enabled: boolPtr(true),
+		},
+	}
+	if len(g.caCertificateFiles) > 0 {
+		units = append([]ignitionUnit{customCAUpdateIgnitionUnit()}, units...)
+	}
+
 	cfg := ignitionConfig{
 		Ignition: ignitionSection{Version: ignitionVersion},
 		Passwd:   ignitionPasswd{Users: []ignitionUser{user}},
 		Storage: ignitionStorage{
-			Files: []ignitionFile{
-				{
-					Path:      "/etc/hostname",
-					Mode:      intPtr(0o644),
-					Overwrite: boolPtr(true),
-					Contents: ignitionFileContents{
-						Source: dataURL(hostname + "\n"),
-					},
-				},
-			},
+			Files: files,
 		},
 		Systemd: ignitionSystemd{
-			Units: []ignitionUnit{
-				{
-					Name:    "docker.service",
-					Enabled: boolPtr(true),
-				},
-			},
+			Units: units,
 		},
 	}
 
@@ -1178,6 +1203,153 @@ func authorizedKeysFromPrivateKey(privateKey []byte) ([]string, error) {
 		return nil, err
 	}
 	return []string{strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))}, nil
+}
+
+func loadCACertificateIgnitionFiles(sourcePath string) ([]ignitionFile, error) {
+	sourcePath = strings.TrimSpace(sourcePath)
+	if sourcePath == "" {
+		return nil, nil
+	}
+
+	hostPaths, err := caCertificateHostPaths(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+
+	files := make([]ignitionFile, 0, len(hostPaths))
+	usedNames := make(map[string]int, len(hostPaths))
+	for i, hostPath := range hostPaths {
+		content, err := os.ReadFile(hostPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading %q: %w", hostPath, err)
+		}
+		if err := validatePEMCertificateBundle(content); err != nil {
+			return nil, fmt.Errorf("validating %q: %w", hostPath, err)
+		}
+
+		name := uniqueCACertificateFileName(sanitizeCACertificateFileName(filepath.Base(hostPath), i), usedNames)
+		files = append(files, ignitionFile{
+			Path:      filepath.ToSlash(filepath.Join("/etc/ssl/certs", name)),
+			Mode:      intPtr(0o644),
+			Overwrite: boolPtr(true),
+			Contents: ignitionFileContents{
+				Source: dataURL(string(content)),
+			},
+		})
+	}
+
+	return files, nil
+}
+
+func caCertificateHostPaths(sourcePath string) ([]string, error) {
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("stat %q: %w", sourcePath, err)
+	}
+
+	if info.Mode().IsRegular() {
+		return []string{sourcePath}, nil
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%q must be a regular file or directory", sourcePath)
+	}
+
+	entries, err := os.ReadDir(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading directory %q: %w", sourcePath, err)
+	}
+
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		entryPath := filepath.Join(sourcePath, entry.Name())
+		entryInfo, err := os.Stat(entryPath)
+		if err != nil {
+			return nil, fmt.Errorf("stat %q: %w", entryPath, err)
+		}
+		if entryInfo.Mode().IsRegular() {
+			paths = append(paths, entryPath)
+		}
+	}
+
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no certificate files found in %q", sourcePath)
+	}
+
+	return paths, nil
+}
+
+func validatePEMCertificateBundle(content []byte) error {
+	rest := bytes.TrimSpace(content)
+	if len(rest) == 0 {
+		return fmt.Errorf("file is empty")
+	}
+
+	foundCertificates := false
+	for len(rest) > 0 {
+		block, remaining := pem.Decode(rest)
+		if block == nil {
+			return fmt.Errorf("file does not contain valid PEM-encoded certificates")
+		}
+		if block.Type != "CERTIFICATE" {
+			return fmt.Errorf("unsupported PEM block type %q", block.Type)
+		}
+		if _, err := x509.ParseCertificates(block.Bytes); err != nil {
+			return fmt.Errorf("parsing certificate: %w", err)
+		}
+
+		foundCertificates = true
+		rest = bytes.TrimSpace(remaining)
+	}
+
+	if !foundCertificates {
+		return fmt.Errorf("file does not contain any certificates")
+	}
+
+	return nil
+}
+
+func sanitizeCACertificateFileName(name string, index int) string {
+	stem := strings.TrimSuffix(name, filepath.Ext(name))
+	stem = strings.TrimSpace(stem)
+	stem = caFileNameSanitizer.ReplaceAllString(stem, "-")
+	stem = strings.Trim(stem, "-.")
+	if stem == "" {
+		stem = fmt.Sprintf("custom-ca-%02d", index+1)
+	}
+	return stem + ".pem"
+}
+
+func uniqueCACertificateFileName(name string, used map[string]int) string {
+	count := used[name]
+	used[name] = count + 1
+	if count == 0 {
+		return name
+	}
+
+	stem := strings.TrimSuffix(name, filepath.Ext(name))
+	ext := filepath.Ext(name)
+	return fmt.Sprintf("%s-%d%s", stem, count+1, ext)
+}
+
+func customCAUpdateIgnitionUnit() ignitionUnit {
+	return ignitionUnit{
+		Name:    customCAUpdateUnitName,
+		Enabled: boolPtr(true),
+		Contents: strings.TrimSpace(`
+[Unit]
+Description=Refresh custom CA certificates for GitLab Runner
+Before=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -ec 'update-ca-certificates'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+`) + "\n",
+	}
 }
 
 func dataURL(contents string) string {

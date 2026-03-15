@@ -6,8 +6,11 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -330,6 +333,143 @@ func TestInstanceGroupShutdownRemovesAllManagedVMs(t *testing.T) {
 	}
 }
 
+func TestLoadCACertificateIgnitionFilesFromDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	firstCert := generateSelfSignedCACertificatePEM(t, "Provider Test Root CA One")
+	secondCert := generateSelfSignedCACertificatePEM(t, "Provider Test Root CA Two")
+
+	firstPath := filepath.Join(dir, "corp root.crt")
+	secondPath := filepath.Join(dir, "corp_root.pem")
+	if err := os.WriteFile(firstPath, firstCert, 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", firstPath, err)
+	}
+	if err := os.WriteFile(secondPath, secondCert, 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", secondPath, err)
+	}
+
+	files, err := loadCACertificateIgnitionFiles(dir)
+	if err != nil {
+		t.Fatalf("loadCACertificateIgnitionFiles() error = %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("loadCACertificateIgnitionFiles() returned %d file(s), want 2", len(files))
+	}
+
+	got := make(map[string]string, len(files))
+	for _, file := range files {
+		if file.Mode == nil || *file.Mode != 0o644 {
+			t.Fatalf("ignition file %q mode = %v, want 0644", file.Path, file.Mode)
+		}
+		if file.Overwrite == nil || !*file.Overwrite {
+			t.Fatalf("ignition file %q overwrite = %v, want true", file.Path, file.Overwrite)
+		}
+		got[file.Path] = file.Contents.Source
+	}
+
+	want := map[string]string{
+		"/etc/ssl/certs/corp-root.pem": dataURL(string(firstCert)),
+		"/etc/ssl/certs/corp_root.pem": dataURL(string(secondCert)),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ignition file map size = %d, want %d", len(got), len(want))
+	}
+	for path, expectedSource := range want {
+		if got[path] != expectedSource {
+			t.Fatalf("ignition file %q source = %q, want %q", path, got[path], expectedSource)
+		}
+	}
+}
+
+func TestLoadCACertificateIgnitionFilesRejectsInvalidPEM(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-a-cert.pem")
+	if err := os.WriteFile(path, []byte("definitely not a certificate"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", path, err)
+	}
+
+	_, err := loadCACertificateIgnitionFiles(path)
+	if err == nil {
+		t.Fatal("loadCACertificateIgnitionFiles() error = nil, want PEM validation failure")
+	}
+	if !strings.Contains(err.Error(), "valid PEM-encoded certificates") {
+		t.Fatalf("loadCACertificateIgnitionFiles() error = %v, want PEM validation detail", err)
+	}
+}
+
+func TestRenderIgnitionIncludesCustomCARefreshUnit(t *testing.T) {
+	cert := generateSelfSignedCACertificatePEM(t, "Provider Test Root CA")
+
+	group := &InstanceGroup{
+		settings: provider.Settings{
+			ConnectorConfig: provider.ConnectorConfig{
+				Username: "core",
+			},
+		},
+		passwordHash:   "hashed-password",
+		authorizedKeys: []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBJfexample runner@test"},
+		caCertificateFiles: []ignitionFile{
+			{
+				Path:      "/etc/ssl/certs/provider-test-root.pem",
+				Mode:      intPtr(0o644),
+				Overwrite: boolPtr(true),
+				Contents: ignitionFileContents{
+					Source: dataURL(string(cert)),
+				},
+			},
+		},
+	}
+
+	rendered, err := group.renderIgnition("provider-test-host")
+	if err != nil {
+		t.Fatalf("renderIgnition() error = %v", err)
+	}
+
+	var cfg ignitionConfig
+	if err := json.Unmarshal(rendered, &cfg); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if len(cfg.Storage.Files) != 2 {
+		t.Fatalf("renderIgnition() wrote %d file(s), want 2", len(cfg.Storage.Files))
+	}
+
+	foundCustomCA := false
+	for _, file := range cfg.Storage.Files {
+		if file.Path == "/etc/ssl/certs/provider-test-root.pem" {
+			foundCustomCA = true
+			if file.Contents.Source != dataURL(string(cert)) {
+				t.Fatalf("custom CA source = %q, want %q", file.Contents.Source, dataURL(string(cert)))
+			}
+		}
+	}
+	if !foundCustomCA {
+		t.Fatal("renderIgnition() did not include the custom CA certificate file")
+	}
+
+	foundDocker := false
+	foundCAUnit := false
+	for _, unit := range cfg.Systemd.Units {
+		switch unit.Name {
+		case "docker.service":
+			foundDocker = true
+		case customCAUpdateUnitName:
+			foundCAUnit = true
+			if !strings.Contains(unit.Contents, "Before=docker.service") {
+				t.Fatalf("custom CA unit contents missing docker ordering:\n%s", unit.Contents)
+			}
+			if !strings.Contains(unit.Contents, "update-ca-certificates") {
+				t.Fatalf("custom CA unit contents missing trust refresh command:\n%s", unit.Contents)
+			}
+		}
+	}
+	if !foundDocker {
+		t.Fatal("renderIgnition() did not keep docker.service enabled")
+	}
+	if !foundCAUnit {
+		t.Fatal("renderIgnition() did not include the custom CA refresh unit")
+	}
+}
+
 func requireSystemLibvirt(t *testing.T) *libvirt.Connect {
 	t.Helper()
 
@@ -453,6 +593,44 @@ func generateSSHPrivateKeyPEM(t *testing.T) []byte {
 	return pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	})
+}
+
+func generateSelfSignedCACertificatePEM(t *testing.T, commonName string) []byte {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey() error = %v", err)
+	}
+
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		t.Fatalf("rand.Int() error = %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName:   commonName,
+			Organization: []string{"gitlab-runner-virt-plugin"},
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate() error = %v", err)
+	}
+
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: der,
 	})
 }
 

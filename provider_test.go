@@ -72,7 +72,7 @@ func TestInstanceGroupInitWithRepoRootQCOW2Path(t *testing.T) {
 	}
 }
 
-func TestResolveBaseVolumeAndCloneRepoRootQCOW2(t *testing.T) {
+func TestResolveBaseVolumeAndCreateOverlayRepoRootQCOW2(t *testing.T) {
 	t.Helper()
 
 	conn := requireSystemLibvirt(t)
@@ -105,31 +105,37 @@ func TestResolveBaseVolumeAndCloneRepoRootQCOW2(t *testing.T) {
 	if details.Capacity == 0 {
 		t.Fatal("resolveBaseVolume() reported zero capacity")
 	}
+	if details.Path == "" {
+		t.Fatal("resolveBaseVolume() reported empty path")
+	}
 
-	cloneName := fmt.Sprintf("provider-test-clone-%d.qcow2", time.Now().UnixNano())
-	clone, err := pool.StorageVolCreateXMLFrom(renderVolumeCloneXML(cloneName, details), baseVol, 0)
+	overlayName := fmt.Sprintf("provider-test-overlay-%d.qcow2", time.Now().UnixNano())
+	overlay, err := pool.StorageVolCreateXML(renderVolumeOverlayXML(overlayName, details), 0)
 	if err != nil {
-		t.Fatalf("StorageVolCreateXMLFrom() error = %v", err)
+		t.Fatalf("StorageVolCreateXML() error = %v", err)
 	}
 	defer func() {
-		_ = clone.Delete(0)
-		_ = clone.Free()
+		_ = overlay.Delete(0)
+		_ = overlay.Free()
 	}()
 
-	desc, err := clone.GetXMLDesc(0)
+	desc, err := overlay.GetXMLDesc(0)
 	if err != nil {
-		t.Fatalf("clone.GetXMLDesc() error = %v", err)
+		t.Fatalf("overlay.GetXMLDesc() error = %v", err)
 	}
 	if got := volumeFormatFromXML(desc); got != "qcow2" {
-		t.Fatalf("clone format = %q, want %q", got, "qcow2")
+		t.Fatalf("overlay format = %q, want %q", got, "qcow2")
+	}
+	if got := volumeBackingStorePathFromXML(desc); got != details.Path {
+		t.Fatalf("overlay backingStore path = %q, want %q", got, details.Path)
 	}
 
-	clonePath, err := clone.GetPath()
+	overlayPath, err := overlay.GetPath()
 	if err != nil {
-		t.Fatalf("clone.GetPath() error = %v", err)
+		t.Fatalf("overlay.GetPath() error = %v", err)
 	}
-	if want := filepath.Join(poolRef.Dir, cloneName); clonePath != want {
-		t.Fatalf("clone path = %q, want %q", clonePath, want)
+	if want := filepath.Join(poolRef.Dir, overlayName); overlayPath != want {
+		t.Fatalf("overlay path = %q, want %q", overlayPath, want)
 	}
 }
 

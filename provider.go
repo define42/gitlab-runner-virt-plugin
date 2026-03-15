@@ -106,6 +106,7 @@ var (
 type baseVolumeDetails struct {
 	Capacity uint64
 	Format   string
+	Path     string
 }
 
 type domainTemplateData struct {
@@ -129,6 +130,12 @@ type storageVolumeXML struct {
 			Type string `xml:"type,attr"`
 		} `xml:"format"`
 	} `xml:"target"`
+	BackingStore struct {
+		Path   string `xml:"path"`
+		Format struct {
+			Type string `xml:"type,attr"`
+		} `xml:"format"`
+	} `xml:"backingStore"`
 }
 
 type libvirtDomainXML struct {
@@ -306,7 +313,7 @@ func (g *InstanceGroup) Increase(ctx context.Context, delta int) (int, error) {
 			continue
 		}
 
-		if err := g.createInstance(conn, pool, baseVol, baseDetails, name); err != nil {
+		if err := g.createInstance(conn, pool, baseDetails, name); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
@@ -551,13 +558,20 @@ func (g *InstanceGroup) resolveBaseVolume(conn *libvirt.Connect, pool *libvirt.S
 		format = "qcow2"
 	}
 
+	path, err := vol.GetPath()
+	if err != nil {
+		_ = vol.Free()
+		return nil, baseVolumeDetails{}, fmt.Errorf("reading base volume path: %w", err)
+	}
+
 	return vol, baseVolumeDetails{
 		Capacity: info.Capacity,
 		Format:   format,
+		Path:     path,
 	}, nil
 }
 
-func (g *InstanceGroup) createInstance(conn *libvirt.Connect, pool *libvirt.StoragePool, baseVol *libvirt.StorageVol, baseDetails baseVolumeDetails, name string) error {
+func (g *InstanceGroup) createInstance(conn *libvirt.Connect, pool *libvirt.StoragePool, baseDetails baseVolumeDetails, name string) error {
 	ignition, err := g.renderIgnition(name)
 	if err != nil {
 		return fmt.Errorf("rendering ignition: %w", err)
@@ -568,10 +582,10 @@ func (g *InstanceGroup) createInstance(conn *libvirt.Connect, pool *libvirt.Stor
 		return fmt.Errorf("writing ignition file: %w", err)
 	}
 
-	volume, err := pool.StorageVolCreateXMLFrom(renderVolumeCloneXML(g.volumeName(name), baseDetails), baseVol, 0)
+	volume, err := pool.StorageVolCreateXML(renderVolumeOverlayXML(g.volumeName(name), baseDetails), 0)
 	if err != nil {
 		_ = os.Remove(ignitionPath)
-		return fmt.Errorf("cloning base volume: %w", err)
+		return fmt.Errorf("creating overlay volume: %w", err)
 	}
 	defer volume.Free()
 
@@ -1005,12 +1019,12 @@ func renderDomainXML(data domainTemplateData) (string, error) {
 	return strings.TrimSpace(buf.String()), nil
 }
 
-func renderVolumeCloneXML(name string, details baseVolumeDetails) string {
+func renderVolumeOverlayXML(name string, details baseVolumeDetails) string {
 	return fmt.Sprintf(
-		"<volume><name>%s</name><capacity unit='bytes'>%d</capacity><target><format type='%s'/></target></volume>",
+		"<volume><name>%s</name><capacity unit='bytes'>%d</capacity><target><format type='qcow2'/></target><backingStore><path>%s</path><format type='qcow2'/></backingStore></volume>",
 		escapeXML(name),
 		details.Capacity,
-		escapeXML(details.Format),
+		escapeXML(details.Path),
 	)
 }
 
@@ -1020,6 +1034,14 @@ func volumeFormatFromXML(desc string) string {
 		return ""
 	}
 	return vol.Target.Format.Type
+}
+
+func volumeBackingStorePathFromXML(desc string) string {
+	var vol storageVolumeXML
+	if err := xml.Unmarshal([]byte(desc), &vol); err != nil {
+		return ""
+	}
+	return vol.BackingStore.Path
 }
 
 func domainMACAddresses(dom *libvirt.Domain) ([]string, error) {

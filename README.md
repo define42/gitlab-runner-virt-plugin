@@ -81,18 +81,30 @@ Supported fields:
 Example full `config.toml` for a GitLab Runner using `docker-autoscaler` with this plugin:
 
 ```toml
-concurrent = 10
+concurrent = 4
+check_interval = 0
+connection_max_age = "15m0s"
+shutdown_timeout = 0
+
+[session_server]
+  session_timeout = 1800
 
 [[runners]]
-  name = "libvirt-flatcar-autoscaler"
-  url = "https://gitlab.example.com"
-  token = "REPLACE_ME"
+  name = "myrunner"
+  url = "https://gitlab.com"
+  id = 52258673
+  token = "<private token>"
   executor = "docker-autoscaler"
   shell = "sh"
 
   [runners.docker]
     image = "alpine:3.20"
     pull_policy = "if-not-present"
+    # privileged and socket mount is safe and secure because each job runs in a
+    # dedicated VM and, with max_use_count = 1, the VM is deleted after the
+    # job completes.
+    privileged = true
+    volumes = ["/var/run/docker.sock:/var/run/docker.sock"]
 
   [runners.autoscaler]
     plugin = "fleeting-plugin-libvirt"
@@ -101,6 +113,8 @@ concurrent = 10
     max_use_count = 1
     max_instances = 10
     delete_instances_on_shutdown = true
+    log_internal_ip = true
+    log_external_ip = true
 
     [runners.autoscaler.plugin_config]
       uri = "qemu:///system"
@@ -110,9 +124,9 @@ concurrent = 10
       state_dir = "/var/lib/libvirt/gitlab-runner-virt-plugin"
       domain_prefix = "gitlab-runner"
       max_size = 10
-      vcpu_count = 2
-      memory_mib = 4096
-      disk_size_gib = 40
+      vcpu_count = 1
+      memory_mib = 512
+      disk_size_gib = 17
       address_source = "lease"
 
     [runners.autoscaler.connector_config]
@@ -121,13 +135,15 @@ concurrent = 10
       protocol = "ssh"
       protocol_port = 22
       username = "core"
-      password = "super-secret-password"
+      key_path = "/etc/gitlab-runner/libvirt-runner"
       use_static_credentials = true
       timeout = "10m"
 
     [[runners.autoscaler.policy]]
-      idle_count = 1
+      idle_count = 3
       idle_time = "20m0s"
+      preemptive_mode = true
+
 ```
 
 Reuse behavior:
@@ -138,6 +154,14 @@ Reuse behavior:
 - `concurrent` should typically be `max_instances * capacity_per_instance`.
 
 If you use SSH keys instead of passwords, set `connector_config.key`. The plugin will derive the matching public key and install it via Ignition.
+
+To create the key referenced by `key_path`, run:
+
+```bash
+sudo install -d -m 700 /etc/gitlab-runner
+sudo ssh-keygen -t ed25519 -N '' -f /etc/gitlab-runner/libvirt-runner
+sudo chmod 600 /etc/gitlab-runner/libvirt-runner
+```
 
 ## Build
 

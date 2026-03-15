@@ -3,6 +3,7 @@
 [![codecov](https://codecov.io/gh/define42/gitlab-runner-virt-plugin/graph/badge.svg?token=Q4AR5750VG)](https://codecov.io/gh/define42/gitlab-runner-virt-plugin)
 
 `gitlab-runner-virt-plugin` is a [Fleeting](https://gitlab.com/gitlab-org/fleeting/fleeting) provider for GitLab Runner `docker-autoscaler` setups backed by libvirt.
+When configured for single-use instances, it gives GitLab Runner a per-job sandbox VM model similar to standard GitHub-hosted runners.
 
 It does three main things:
 
@@ -17,6 +18,10 @@ The generated Ignition config:
 - derives and installs an SSH public key when `connector_config.key` is set
 - enables `docker.service`
 - sets `/etc/hostname` to the VM name
+
+For Runner SSH connectivity, use `connector_config.key` or `key_path`.
+`connector_config.password` is written into Ignition, but password-based SSH
+authentication does not work with the current Runner/Fleeting connector here.
 
 ## Requirements
 
@@ -76,6 +81,19 @@ Supported fields:
 - `machine_type`: optional machine type passed into the libvirt XML `os/type` element
 - `address_source`: `auto`, `lease`, `agent`, or `arp`
 
+## Security Model
+
+For the strongest isolation, use:
+
+- `capacity_per_instance = 1`
+- `max_use_count = 1`
+
+That makes Runner create one VM for one job and then discard it. The job container runs against the Docker daemon inside that VM, not the libvirt host's Docker daemon. In practice, this is the GitLab Runner equivalent of the standard GitHub-hosted runner pattern: a fresh VM per job with teardown after the job completes.
+
+This is similar to GitHub-hosted runners, not literally the same service. GitHub manages the hypervisor, image pipeline, and platform hardening for GitHub-hosted runners. With this plugin, you manage the libvirt host, base image contents, patching, network boundaries, and access to secrets.
+
+If you increase `capacity_per_instance` or `max_use_count`, you trade some isolation for better density and faster warm reuse.
+
 ## Runner Example
 
 Example full `config.toml` for a GitLab Runner using `docker-autoscaler` with this plugin:
@@ -100,9 +118,9 @@ shutdown_timeout = 0
   [runners.docker]
     image = "alpine:3.20"
     pull_policy = "if-not-present"
-    # privileged and socket mount is safe and secure because each job runs in a
-    # dedicated VM and, with max_use_count = 1, the VM is deleted after the
-    # job completes.
+    # privileged mode and the Docker socket mount apply inside the guest VM.
+    # With capacity_per_instance = 1 and max_use_count = 1, each job gets a
+    # fresh sandbox VM that is deleted after the job completes.
     privileged = true
     volumes = ["/var/run/docker.sock:/var/run/docker.sock"]
 
@@ -150,10 +168,13 @@ Reuse behavior:
 
 - `max_use_count = 1` means each VM is used for exactly one job and then deleted.
 - `max_use_count = 5` means a VM can be reused for up to five jobs before Runner schedules it for removal.
-- `capacity_per_instance = 1` is the safest default for isolated ephemeral runners.
+- `capacity_per_instance = 1` keeps the security boundary at one job per VM.
+- `capacity_per_instance = 1` plus `max_use_count = 1` is the closest match to the standard GitHub-hosted runner isolation model.
 - `concurrent` should typically be `max_instances * capacity_per_instance`.
 
-If you use SSH keys instead of passwords, set `connector_config.key`. The plugin will derive the matching public key and install it via Ignition.
+Use SSH keys for Runner connectivity. Set `key_path`.
+The plugin will derive the matching public key and install it via Ignition.
+`connector_config.password` does not work for Runner SSH connectivity here.
 
 To create the key referenced by `key_path`, run:
 
@@ -188,3 +209,5 @@ install -m 0755 fleeting-plugin-libvirt_linux_amd64 /usr/local/bin/fleeting-plug
 - Flatcar libvirt provisioning: https://www.flatcar.org/docs/latest/installing/virtualization/libvirt/
 - Flatcar authentication examples: https://www.flatcar.org/docs/latest/setup/customization/configuring-flatcar/
 - libvirt domain XML and `fw_cfg`: https://libvirt.org/formatdomain.html
+- GitHub-hosted runners: https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners
+- GitHub Actions security hardening: https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions
